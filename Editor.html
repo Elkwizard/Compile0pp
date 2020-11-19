@@ -1,0 +1,252 @@
+<head>
+	<style>
+		:root {
+			--compiled: 50%;
+		}
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			background: #223;
+		}
+
+		table {
+			padding: 10px;
+			width: 100%;
+			height: 100%;
+		}
+
+		td {
+			width: 50%;
+			height: 100%;
+			position: relative;
+		}
+
+		#input,
+		#output {
+			tab-size: 20px;
+			width: 100%;
+			height: 100%;
+			color: white;
+			font: 20px monospace;
+			background: #445;
+			border: none;
+			resize: none;
+			overflow: auto;
+			padding: 10px;
+			position: absolute;
+			left: 0;
+			top: 0;
+			outline: none;
+		}
+
+		#input {
+			/* color: transparent; */
+			caret-color: white;
+		}
+
+		#output {
+			height: var(--compiled);
+			/* display: none; */
+			font-size: 10px;
+		}
+		#runtime {
+			width: 100%;
+			height: calc(100% - var(--compiled));
+			position: absolute;
+			top: var(--compiled);
+			left: 0;
+			padding: 10px;
+			color: white;
+			font: 20px monospace;
+		}
+
+		button, #download {
+			text-decoration: none;
+			border: 1px white solid;
+			background: none;
+			color: white;
+			padding: 1em 2.5em;
+			cursor: pointer;
+			font-size: 20px;
+			font-family: monospace;
+		}
+		input {
+			padding: 10px;
+			font: 20px monospace;
+			color: white;
+			background: none;
+			border: none;
+			border-bottom: 1px white solid;
+			outline: none;
+		}
+		hr {
+			margin: 3px 0px;
+		}
+
+		#highlight {
+			width: 100%;
+			height: 100%;
+			left: 0;
+			top: 0;
+			pointer-events: none;
+			position: absolute;
+			padding: 10px;
+			font: 20px monospace;
+
+		}
+		#fileName {
+			position: absolute;
+			z-index: 2;
+			padding: 20px;
+			background: #223;
+			border: none;
+			border-bottom: 1px white solid;
+			right: 0;
+			bottom: 0;
+			font: 20px monospace;
+		}
+
+		#programOutput {
+			height: calc(100% - 132px);
+			overflow: auto;
+			border: 1px white solid;
+			margin-top: 10px;
+		}
+
+		.log {
+			padding: 4px;
+			border-bottom: 1px white solid;
+		}
+		.log::before {
+			content: "> ";
+		}
+
+		.token {
+			display: inline-block;
+			color: transparent !important;
+			/* border: 1px black solid; */
+			/* border-radius: 3px; */
+			/* padding: 2px 4px; */
+		}
+
+		.identifier {
+			color: greenyellow;
+		}
+
+		.operator {
+			color: orange;
+		}
+
+		.keyword {
+			color: crimson;
+		}
+
+		.number {
+			color: blueviolet;
+		}
+	</style>
+	<script src="Compiler.js"></script>
+	<title>Compile 0++</title>
+</head>
+
+<body>
+	<table>
+		<tr>
+			<td>
+				<textarea id="input" spellcheck="false" placeholder="0++ Source Code">
+function add2(a, b) {
+	return a + b;
+}
+function add4(a, b, c, d) {
+	let sum1 = add2(a, b);
+	let sum2 = add2(c, d);
+	return sum1 + sum2;
+}
+out add4(1, 2, 3, 4);
+out add2(1, 2);
+out add2(3, 4);
+out add2(5, 6);
+out add2(7, 8);
+out add2(9, 10);
+out add2(11, 12);
+				</textarea>
+				<div id="highlight"></div>
+				<input id="fileName" value="Untitled Program">
+			</td>
+			<td>
+				<textarea id="output" spellcheck="false" placeholder="0=0 Assembly"></textarea>
+				<div id="runtime">
+					<button onclick="run()">Run</button><a id="download">Download 'Untitled Program.zez'</a><br>
+					input: <input id="programInputA" type="text" value="0"><br>
+					output: <div id="programOutput">
+						<div class="log">0</div>
+					</div>
+				</div>
+			</td>
+		</tr>
+	</table>
+	<script>
+
+		input.focus();
+		onkeydown = onkeyup = () => {
+			let compiled = compile(input.value);
+			output.value = compiled;
+			let download = document.getElementById("download");
+			download.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(compiled));
+			let fileName = document.getElementById("fileName").value + ".zez";
+			download.setAttribute("download", fileName);
+			download.innerText = "Download '" + download.download + "'";
+		}
+		document.body.addEventListener("keydown", function (e) {
+			if (e.key === "Tab") {
+				e.preventDefault();
+				let sel = input.selectionEnd;
+				input.value = input.value.slice(0, sel) + "\t" + input.value.slice(sel);
+				input.selectionEnd = sel + 1;
+			}
+		});
+
+		//Interpreter
+		function run() {
+			function read(n) {
+				if (n === -2) return input.shift() || 0;
+				else return memory[n];
+			}
+			function getNum(str) {
+				let index = str.search(/\d+/);
+				let n = parseInt(str.substring(index));
+				for (let i = index - 1; i > -1; i--) switch (str[i]) {
+					case "-":
+						n *= -1;
+						break
+					case "[":
+						n = read(n) || 0;
+						break
+					case "(":
+						n = Math.sign(read(n) || 0);
+						break
+				}
+				return n;
+			}
+			let memory = [0];
+			let input = document.getElementById("programInputA").value.split(" ").map(num => parseInt(num));
+			let lines = document.getElementById("output").value.split("\n");
+			let output = [];
+			do {
+				let nums = lines[memory[0]].split(" ");
+				for (let i = 0; i < nums.length; i += 2) {
+					let writeTo = getNum(nums[i]);
+					let write = (read(writeTo) || 0) + getNum(nums[i + 1]);
+					if (writeTo === -1) output.push(write);
+					else memory[writeTo] = write;
+				}
+				memory[0]++;
+			} while (lines[memory[0]]);
+			document.getElementById("programOutput").innerHTML = output.map(out => `<div class="log">${out}</div>`).join("");
+		}
+	</script>
+</body>
