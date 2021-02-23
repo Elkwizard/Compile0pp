@@ -80,8 +80,10 @@ function compile(source) {
 			let nextTok = splitTokens[i + 1];
 
 			if (nextTok && nextTok.type === Token.NUMBER && tok.text === "-") {
-				finalTokens.push(new Token("-" + nextTok.text, Token.NUMBER));
-				i++;
+				if (!i || splitTokens[i - 1].type === Token.OPERATOR) {
+					finalTokens.push(new Token("-" + nextTok.text, Token.NUMBER));
+					i++;
+				} else finalTokens.push(tok);
 			} else finalTokens.push(tok);
 		}
 
@@ -480,6 +482,18 @@ function compile(source) {
 	}
 	let functionStart = "";
 
+	/*
+
+	> 10
+	> 3
+	> 7
+	> 11
+	> 15
+	> 19
+	> 23
+
+	*/
+
 	const 	JUMP_REGISTER =								nextSystemRegister(),
 			EXPR_REGISTER = 							nextSystemRegister(),
 			VARIABLE_POINTER_REGISTER =					nextSystemRegister(),
@@ -518,7 +532,7 @@ function compile(source) {
 		setLiteral(LOOP_LENGTH_POINTER_REGISTER, LOOP_BLOCK_START + 1),
 		setLiteral(CALL_STACK_POINTER_REGISTER, FUNCTION_BLOCK_START),
 		setLiteral(CALL_STACK_LENGTH_POINTER_REGISTER, FUNCTION_BLOCK_START + 1),
-		setLiteral(CALL_STACK_LAST_LENGTH_POINTER_REGISTER, FUNCTION_BLOCK_START + 2),
+		setLiteral(CALL_STACK_LAST_LENGTH_POINTER_REGISTER, FUNCTION_BLOCK_START + 2)
 	);
 	function malloc() {
 		return currentRegister++;
@@ -546,7 +560,7 @@ function compile(source) {
 				createVariable(varName);
 				statement(expression(text.slice(3)));
 				statement(variable(text[1]));
-				statement(add(register(VARIABLE_POINTER_REGISTER), EXPR_REGISTER));
+				statement(set(register(VARIABLE_POINTER_REGISTER), EXPR_REGISTER));
 			}
 			if (keyword === "out") {
 				// out a
