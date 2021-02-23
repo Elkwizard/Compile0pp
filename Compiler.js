@@ -1,6 +1,6 @@
 function compile(source) {
 	const symbols = ["+", "-", "/", "*", "=", "(", ")", "{", "}", ";", "==", "<=", ">=", "<", ">", "!=", "!"];
-	const keywords = ["let", "out", "if", "while", "loop", "function", "in", "return"];
+	const keywords = ["let", "out", "if", "while", "loop", "function", "in", "return", "true", "false"];
 	class Token {
 		constructor(text, type) {
 			this.text = text;
@@ -188,14 +188,14 @@ function compile(source) {
 	}
 	function loopPush() {
 		return compose(
-			addLiteral(LOOP_POINTER_REGISTER, LOOP_FRAME_SIZE), 
+			addLiteral(LOOP_POINTER_REGISTER, LOOP_FRAME_SIZE),
 			addLiteral(LOOP_LENGTH_POINTER_REGISTER, LOOP_FRAME_SIZE)
 		);
 	}
 	function loopPop() {
 		return compose(
-			setLiteral(LOOP_REGISTER, 0), 
-			subtractLiteral(LOOP_POINTER_REGISTER, LOOP_FRAME_SIZE), 
+			reset(LOOP_REGISTER),
+			subtractLiteral(LOOP_POINTER_REGISTER, LOOP_FRAME_SIZE),
 			subtractLiteral(LOOP_LENGTH_POINTER_REGISTER, LOOP_FRAME_SIZE)
 		);
 	}
@@ -203,37 +203,26 @@ function compile(source) {
 		let fn = functions[name];
 		args = args.slice(0, fn.args.length);
 		while (args.length < fn.args.length) args.push([new Token("0", Token.NUMBER)]);
-		
-		let argInst = compose(...args.map(arg => compose(
-			addLiteral(CALL_STACK_ARG_POINTER_REGISTER, 1),
-			expression(arg),
-			set(CALL_STACK_ARG_REGISTER, EXPR_REGISTER)
-		)));
-		
+
 		return compose(
-			//shift
-			add(CALL_STACK_POINTER_REGISTER, CALL_STACK_LENGTH_REGISTER),
-			add(CALL_STACK_LAST_LENGTH_POINTER_REGISTER, CALL_STACK_LENGTH_REGISTER),
-			set(CALL_STACK_LAST_LENGTH_REGISTER, CALL_STACK_LENGTH_REGISTER),
-			add(CALL_STACK_LENGTH_POINTER_REGISTER, CALL_STACK_LENGTH_REGISTER),
-			set(CALL_STACK_ARG_POINTER_REGISTER, CALL_STACK_LAST_LENGTH_POINTER_REGISTER),
-			//args
-			argInst,
-			set(CALL_STACK_ARG_POINTER_ACCESS_REGISTER, CALL_STACK_LAST_LENGTH_POINTER_REGISTER),
-			setLiteral(CALL_STACK_LENGTH_REGISTER, args.length + 3),
-			set(CALL_STACK_REGISTER, ZERO),
-			addLiteral(CALL_STACK_REGISTER, 6),
+			set(CS_TEMP_REGISTER, CS_POINTER_REGISTER),
+			...args.map(arg => compose(
+				addLiteral(CS_TEMP_REGISTER, 1),
+				expression(arg),
+				set(register(CS_TEMP_REGISTER), EXPR_REGISTER)
+			)),
+			set(CS_POINTER_REGISTER, CS_TEMP_REGISTER),
+			addLiteral(CS_POINTER_REGISTER, 1),
+			set(CS_REGISTER, ZERO),
+			addLiteral(CS_REGISTER, 6),
 			jumpExactLiteral(fn.line)
 		);
 	}
-	function functionPop() {
+	function functionPop(fn) {
 		return compose(
-			set(CALL_STACK_TEMP_REGISTER, CALL_STACK_REGISTER),
-			subtract(CALL_STACK_POINTER_REGISTER, CALL_STACK_LAST_LENGTH_REGISTER),
-			subtract(CALL_STACK_LENGTH_POINTER_REGISTER, CALL_STACK_LAST_LENGTH_REGISTER),
-			subtract(CALL_STACK_LAST_LENGTH_POINTER_REGISTER, CALL_STACK_LAST_LENGTH_REGISTER),
-			set(CALL_STACK_ARG_POINTER_ACCESS_REGISTER, CALL_STACK_LAST_LENGTH_POINTER_REGISTER),
-			jumpExact(CALL_STACK_TEMP_REGISTER)
+			set(CS_TEMP_REGISTER, CS_REGISTER),
+			subtractLiteral(CS_POINTER_REGISTER, fn.args.length + 1),
+			jumpExact(CS_TEMP_REGISTER)
 		);
 	}
 	function functionCall(toks) {
@@ -250,8 +239,15 @@ function compile(source) {
 			//number
 			return setLiteral(REGISTER, tok.text);
 		} else if (tok.type === Token.KEYWORD) {
-			//in
-			return set(REGISTER, INPUT_REGISTER);
+			//predefined value
+			switch (tok.text) {
+				case "in":
+					return set(REGISTER, INPUT_REGISTER);
+				case "true":
+					return setLiteral(REGISTER, 1);
+				case "false":
+					return reset(REGISTER);
+			}
 		} else {
 			//variable
 			return compose(variable(tok), set(REGISTER, register(VARIABLE_POINTER_REGISTER)));
@@ -438,17 +434,17 @@ function compile(source) {
 		);
 	}
 
-	
+
 	function compileTokens(toks) {
 		return compileLines(getLines(toks));
 	}
 	function variable(tok) {
 		if (variables[tok.text]) {
 			return setLiteral(VARIABLE_POINTER_REGISTER, variables[tok.text].register);
-		} else if (tok.paramNumber !== undefined) {
+		} else if ("paramOffset" in tok) {
 			return compose(
-				set(VARIABLE_POINTER_REGISTER, CALL_STACK_ARG_POINTER_ACCESS_REGISTER),
-				addLiteral(VARIABLE_POINTER_REGISTER, tok.paramNumber + 1)
+				setLiteral(VARIABLE_POINTER_REGISTER, CS_REGISTER),
+				addLiteral(VARIABLE_POINTER_REGISTER, tok.paramOffset)
 			);
 		} else throw new Error("Undefined variable [" + tok.text + "]");
 	}
@@ -482,63 +478,42 @@ function compile(source) {
 	}
 	let functionStart = "";
 
-	/*
-
-	> 10
-	> 3
-	> 7
-	> 11
-	> 15
-	> 19
-	> 23
-
-	*/
-
-	const 	JUMP_REGISTER =								nextSystemRegister(),
-			EXPR_REGISTER = 							nextSystemRegister(),
-			VARIABLE_POINTER_REGISTER =					nextSystemRegister(),
-			MULTIPLICATION_PROGRESS_REGISTER = 			nextSystemRegister(),
-			MULTIPLICATION_DIRECTION_REGISTER =			nextSystemRegister(),
-			DIVISION_REMAINDER_REGISTER = 				nextSystemRegister(),
-			DIVISION_OFFSET_REGISTER_A =				nextSystemRegister(),
-			DIVISION_OFFSET_REGISTER_B =				nextSystemRegister(),
-			DIVISION_SIGN_REGISTER = 					nextSystemRegister(),
-			DIVISION_NEGATION_REGISTER = 				nextSystemRegister(),
-			UNARY_INVERSION_REGISTER =					nextSystemRegister(),
-			OPERAND_REGISTER_A = 						nextSystemRegister(),
-			OPERAND_REGISTER_B = 						nextSystemRegister(),
-			OFFSET_REGISTER_TEMP = 						nextSystemRegister(),
-			OFFSET_REGISTER = 							nextSystemRegister(),
-			LOOP_POINTER_REGISTER = 					nextSystemRegister(),
-			LOOP_LENGTH_POINTER_REGISTER = 				nextSystemRegister(),
-			LOOP_REGISTER = 							register(LOOP_POINTER_REGISTER),
-			LOOP_LENGTH_REGISTER =						register(LOOP_LENGTH_POINTER_REGISTER),
-			CALL_STACK_POINTER_REGISTER = 				nextSystemRegister(),
-			CALL_STACK_LENGTH_POINTER_REGISTER =		nextSystemRegister(),
-			CALL_STACK_LAST_LENGTH_POINTER_REGISTER = 	nextSystemRegister(),
-			CALL_STACK_ARG_POINTER_REGISTER =			nextSystemRegister(),
-			CALL_STACK_ARG_POINTER_ACCESS_REGISTER =	nextSystemRegister(),
-			CALL_STACK_TEMP_REGISTER =					nextSystemRegister(),
-			CALL_STACK_ARG_REGISTER =					register(CALL_STACK_ARG_POINTER_REGISTER),
-			CALL_STACK_REGISTER =						register(CALL_STACK_POINTER_REGISTER),
-			CALL_STACK_LENGTH_REGISTER =				register(CALL_STACK_LENGTH_POINTER_REGISTER),
-			CALL_STACK_LAST_LENGTH_REGISTER =			register(CALL_STACK_LAST_LENGTH_POINTER_REGISTER),
-			CONDITION_OFFSET_REGISTER = 				nextSystemRegister(),
-			ZERO = 										0,
-			OUTPUT_REGISTER = 							-1,
-			INPUT_REGISTER = 							-2;
+	const JUMP_REGISTER = nextSystemRegister(),
+		EXPR_REGISTER = nextSystemRegister(),
+		VARIABLE_POINTER_REGISTER = nextSystemRegister(),
+		MULTIPLICATION_PROGRESS_REGISTER = nextSystemRegister(),
+		MULTIPLICATION_DIRECTION_REGISTER = nextSystemRegister(),
+		DIVISION_REMAINDER_REGISTER = nextSystemRegister(),
+		DIVISION_OFFSET_REGISTER_A = nextSystemRegister(),
+		DIVISION_OFFSET_REGISTER_B = nextSystemRegister(),
+		DIVISION_SIGN_REGISTER = nextSystemRegister(),
+		DIVISION_NEGATION_REGISTER = nextSystemRegister(),
+		UNARY_INVERSION_REGISTER = nextSystemRegister(),
+		OPERAND_REGISTER_A = nextSystemRegister(),
+		OPERAND_REGISTER_B = nextSystemRegister(),
+		OFFSET_REGISTER_TEMP = nextSystemRegister(),
+		OFFSET_REGISTER = nextSystemRegister(),
+		LOOP_POINTER_REGISTER = nextSystemRegister(),
+		LOOP_LENGTH_POINTER_REGISTER = nextSystemRegister(),
+		LOOP_REGISTER = register(LOOP_POINTER_REGISTER),
+		LOOP_LENGTH_REGISTER = register(LOOP_LENGTH_POINTER_REGISTER),
+		CS_TEMP_REGISTER = nextSystemRegister(),
+		CS_POINTER_REGISTER = nextSystemRegister(),
+		CS_REGISTER = register(CS_POINTER_REGISTER),
+		CONDITION_OFFSET_REGISTER = nextSystemRegister(),
+		ZERO = 0,
+		OUTPUT_REGISTER = -1,
+		INPUT_REGISTER = -2;
 	const PROGRAM_INIT = compose(
 		setLiteral(LOOP_POINTER_REGISTER, LOOP_BLOCK_START),
 		setLiteral(LOOP_LENGTH_POINTER_REGISTER, LOOP_BLOCK_START + 1),
-		setLiteral(CALL_STACK_POINTER_REGISTER, FUNCTION_BLOCK_START),
-		setLiteral(CALL_STACK_LENGTH_POINTER_REGISTER, FUNCTION_BLOCK_START + 1),
-		setLiteral(CALL_STACK_LAST_LENGTH_POINTER_REGISTER, FUNCTION_BLOCK_START + 2)
+		setLiteral(CS_POINTER_REGISTER, FUNCTION_BLOCK_START)
 	);
 	function malloc() {
 		return currentRegister++;
 	}
 	function createVariable(n, reg = malloc()) {
-		if (variables[n]) throw new Error(`Redeclaration of variable "${n}"`);
+		if (n in variables) throw new Error(`Redeclaration of variable "${n}"`);
 		variables[n] = new Variable(n, reg);
 	}
 	function deleteVariable(n) {
@@ -559,8 +534,7 @@ function compile(source) {
 				let varName = text[1].text;
 				createVariable(varName);
 				statement(expression(text.slice(3)));
-				statement(variable(text[1]));
-				statement(set(register(VARIABLE_POINTER_REGISTER), EXPR_REGISTER));
+				statement(set(variables[varName].register, EXPR_REGISTER));
 			}
 			if (keyword === "out") {
 				// out a
@@ -578,7 +552,7 @@ function compile(source) {
 				let region = getRegion(text, "(", ")");
 				let check = expression(region);
 				let body = compileTokens(bracketed);
-				let length = getLength(body) + getLength(check) + 1 /* prevent inc */ + 6 /* length of condition */ 
+				let length = getLength(body) + getLength(check) + 1 /* prevent inc */ + 6 /* length of condition */
 				statement(check);
 				statement(condition(compose(
 					body,
@@ -590,7 +564,7 @@ function compile(source) {
 				let region = getRegion(text, "(", ")");
 				let count = expression(region);
 				let body = compileTokens(bracketed);
-				let length = 1 /* prevent inc */ + 2 /* back to body */ + getLength(body) /* get through jumps */ + 4 /* go through difference offset */ + 5 /* through differenceOffset setup */ + 6;  
+				let length = 1 /* prevent inc */ + 2 /* back to body */ + getLength(body) /* get through jumps */ + 4 /* go through difference offset */ + 5 /* through differenceOffset setup */ + 6;
 				let escapeLength = getLength(body) /* through loop end */ + 2;
 				statement(loopPush());
 				statement(count);
@@ -610,10 +584,12 @@ function compile(source) {
 				statement(loopPop());
 			}
 			if (keyword === "return") {
-				return compose(
-					expression(text.slice(1)),
-					functionPop()
-				);
+				if ("fn" in text[0]) {
+					return compose(
+						expression(text.slice(1)),
+						functionPop(text[0].fn)
+					);
+				} else throw new Error("Global return");
 			}
 			if (keyword === "function") {
 				if (!global) throw new Error("Non-global Function");
@@ -621,17 +597,21 @@ function compile(source) {
 				let region = getRegion(text, "(", ")");
 				let args = [];
 				for (let i = 0; i < region.length; i += 2) args.push(region[i].text);
-			
+
+				const fn = new Function0pp(name, args, getLength(functionStart) + getLength(PROGRAM_INIT));
+
 				for (let i = 0; i < bracketed.length; i++) {
 					let tok = bracketed[i];
-					if (args.includes(tok.text)) tok.paramNumber = args.indexOf(tok.text);
+					if (args.includes(tok.text)) tok.paramOffset = args.indexOf(tok.text) - args.length;
+					if (tok.text === "return") tok.fn = fn;
 				}
 
-				functions[name] = new Function0pp(name, args, getLength(functionStart) + getLength(PROGRAM_INIT));
+				functions[name] = fn;
 				let body = compileTokens(bracketed);
 				body = compose(
 					body,
-					functionPop()
+					reset(EXPR_REGISTER, 0),
+					functionPop(fn)
 				);
 
 				functionStart = compose(functionStart, body);
@@ -656,11 +636,11 @@ function compile(source) {
 	let toks = getTokens(pre);
 	let lines = getLines(toks);
 	let compiled = compileLines(lines, true);
-	
+
 	//function start
 	let len = functionStart.length ? getLength(functionStart) : 0;
 	functionStart = compose(jumpLiteral(len), functionStart);
 	compiled = compose(PROGRAM_INIT, functionStart, compiled);
-	
+
 	return compiled;
 }

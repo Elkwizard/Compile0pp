@@ -192,7 +192,7 @@ out add2(11, 12);
 	<script>
 
 		input.focus();
-		onkeydown = onkeyup = () => {
+		function updateCompilation() {
 			let compiled = compile(input.value);
 			output.value = compiled;
 			let download = document.getElementById("download");
@@ -201,6 +201,8 @@ out add2(11, 12);
 			download.setAttribute("download", fileName);
 			download.innerText = "Download '" + download.download + "'";
 		}
+		onkeydown = onkeyup = updateCompilation;
+		updateCompilation();
 		document.body.addEventListener("keydown", function (e) {
 			if (e.key === "Tab") {
 				e.preventDefault();
@@ -236,7 +238,10 @@ out add2(11, 12);
 			let input = document.getElementById("programInputA").value.split(" ").map(num => parseInt(num));
 			let lines = document.getElementById("output").value.split("\n");
 			let output = [];
+			let I = 0;
+			
 			do {
+				if (I++ > 1000) break;
 				let nums = lines[memory[0]].split(" ");
 				for (let i = 0; i < nums.length; i += 2) {
 					let writeTo = getNum(nums[i]);
